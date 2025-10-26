@@ -4,6 +4,8 @@ import threading
 from datetime import datetime
 from collections import deque
 import os
+import json
+from datetime import timedelta
 
 # Optional Discord bot integration
 try:
@@ -28,6 +30,61 @@ CORS(app)
 # Queue for Roblox server info
 server_queue = deque(maxlen=200)  # increased maxlen to hold more servers
 ping_logs = deque(maxlen=50)
+KEYS_FILE = "keys.json"
+
+# Default static keys and durations (seconds)
+DEFAULT_KEYS = {
+    "HNGJ-JNEW-P5Z0-JGCW": 3600,       # 1 hour
+    "VC5H-1NCY-X84Y-A2JP": 10800,      # 3 hours
+    "4N1F-XIRV-XLYV-VVR0": 32400,      # 9 hours
+    "RDN5-2ZZE-2QXX-USS0": 86400       # 1 day
+}
+
+
+def load_keys():
+    if os.path.exists(KEYS_FILE):
+        try:
+            with open(KEYS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            pass
+
+    # build default structure
+    data = {"keys": {}}
+    now = datetime.now().isoformat()
+    for k, d in DEFAULT_KEYS.items():
+        data["keys"][k] = {"duration": d, "used_by": None, "expires_at": None}
+    save_keys(data)
+    return data
+
+
+def save_keys(data):
+    try:
+        with open(KEYS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print("⚠️ Could not save keys.json:", e)
+
+
+def free_expired_keys(data):
+    changed = False
+    now = datetime.now()
+    for k, info in data.get("keys", {}).items():
+        exp = info.get("expires_at")
+        if exp:
+            try:
+                exp_dt = datetime.fromisoformat(exp)
+                if exp_dt <= now:
+                    info["used_by"] = None
+                    info["expires_at"] = None
+                    changed = True
+            except Exception:
+                info["used_by"] = None
+                info["expires_at"] = None
+                changed = True
+    if changed:
+        save_keys(data)
+    return data
 
 @app.route('/')
 def index():
@@ -91,6 +148,28 @@ def pull_server():
 @app.route('/api/server/all', methods=['GET'])
 def all_servers():
     return jsonify({'status': 'success', 'data': list(server_queue), 'queue_size': len(server_queue)})
+
+
+@app.route('/api/server/reset', methods=['POST', 'GET'])
+def reset_servers():
+    """Clear the server queue and ping logs (admin/debug)."""
+    try:
+        # Clear server queue and ping logs
+        try:
+            server_queue.clear()
+        except Exception:
+            # fallback: reassign
+            from collections import deque as _dq
+            globals()['server_queue'] = _dq(maxlen=200)
+
+        try:
+            ping_logs.clear()
+        except Exception:
+            globals()['ping_logs'] = deque(maxlen=50)
+
+        return jsonify({'success': True, 'queue_size': len(server_queue)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 # Categorize servers by money
 @app.route('/api/server/categories', methods=['GET'])
@@ -163,3 +242,4 @@ if __name__ == '__main__':
         print("ℹ️ Discord bot monitoring disabled")
     
     app.run(host='0.0.0.0', port=port, debug=False)
+
